@@ -1,0 +1,18 @@
+[toolchain]
+# Pinned, so every machine that builds the package compiles the same thing.
+channel = "1.99.0"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
+targets = [
+  # Android
+  "aarch64-linux-android",
+  "armv7-linux-androideabi",
+  "x86_64-linux-android",
+  # iOS device and simulators (Flutter builds the simulator for both architectures)
+  "aarch64-apple-ios",
+  "aarch64-apple-ios-sim",
+  "x86_64-apple-ios",
+  # macOS (Flutter builds a universal binary)
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+]

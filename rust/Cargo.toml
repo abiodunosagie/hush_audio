@@ -1,0 +1,28 @@
+[package]
+name = "hush-audio"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "C ABI over hush-core for the hush_audio Flutter package."
+license = "MIT"
+publish = false
+
+[lib]
+# staticlib and cdylib are what native_toolchain_rust links; it picks per platform.
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+hush-core = { git = "https://github.com/abiodunosagie/hush-core", rev = "9f26bb7507fffc6d7cc1daa1a9d58796e60c555e" }
+
+# macOS and iOS play through cpal (Core Audio).
+[target.'cfg(not(target_os = "android"))'.dependencies]
+cpal = "0.18"
+
+# Android plays through AAudio directly. cpal's Android backend needs a Java context that a
+# library loaded by dart:ffi never receives, and it aborts without one.
+[target.'cfg(target_os = "android")'.dependencies]
+ndk = { version = "0.9", default-features = false, features = ["audio", "api-level-26"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
