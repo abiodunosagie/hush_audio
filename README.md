@@ -1,10 +1,4 @@
-<h1>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="brand/hush-wordmark-lamp.svg">
-    <img src="brand/hush-wordmark-night.svg" alt="hush" width="150">
-  </picture>
-  audio
-</h1>
+<img src="brand/banner.png" alt="hush_audio: calm and sleep sounds for Flutter, powered by Rust" width="100%">
 
 [![CI](https://github.com/abiodunosagie/hush_audio/actions/workflows/ci.yml/badge.svg)](https://github.com/abiodunosagie/hush_audio/actions/workflows/ci.yml)
 
