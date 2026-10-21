@@ -26,3 +26,7 @@ ndk = { version = "0.9", default-features = false, features = ["audio", "api-lev
 [profile.release]
 lto = true
 codegen-units = 1
+# Smaller library in the app: no symbol tables, and no unwinding tables (a panic could not cross
+# the C ABI anyway; it aborts there).
+strip = true
+panic = "abort"

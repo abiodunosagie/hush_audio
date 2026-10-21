@@ -6,17 +6,28 @@ enum Playback { stopped, playing, stopping }
 /// Everything the screen shows, as one immutable value.
 class SoundState {
   const SoundState({
+    required this.toneFrequency,
+    required this.toneMode,
+    required this.beatHz,
+    required this.noiseEnabled,
+    required this.noiseColor,
+    required this.noiseLevel,
+    required this.rain,
     this.playback = Playback.stopped,
-    this.toneFrequency = 852,
-    this.toneMode = ToneMode.steady,
-    this.beatHz = 6,
-    this.noiseEnabled = false,
-    this.noiseColor = NoiseColor.brown,
-    this.noiseLevel = 0.4,
-    this.rain = 0,
     this.level = 0,
     this.error,
   });
+
+  /// The engine's current settings, so the screen starts from what the engine really holds.
+  factory SoundState.of(HushEngine engine) => SoundState(
+    toneFrequency: engine.toneFrequency,
+    toneMode: engine.toneMode,
+    beatHz: engine.beatHz,
+    noiseEnabled: engine.noiseEnabled,
+    noiseColor: engine.noiseColor,
+    noiseLevel: engine.noiseLevel,
+    rain: engine.ambientLevel(Ambient.rain),
+  );
 
   final Playback playback;
   final double toneFrequency;
@@ -30,7 +41,7 @@ class SoundState {
   /// The engine's master gain, 0 to 1, for the level ring.
   final double level;
 
-  /// Set when the audio output could not be opened.
+  /// Set when the audio output could not be opened or stopped working.
   final String? error;
 
   bool get isPlaying => playback == Playback.playing;
@@ -60,4 +71,33 @@ class SoundState {
       error: error != null ? error() : this.error,
     );
   }
+
+  // Equality lets the Cubit skip identical states, so a steady level does not rebuild the screen.
+  @override
+  bool operator ==(Object other) =>
+      other is SoundState &&
+      other.playback == playback &&
+      other.toneFrequency == toneFrequency &&
+      other.toneMode == toneMode &&
+      other.beatHz == beatHz &&
+      other.noiseEnabled == noiseEnabled &&
+      other.noiseColor == noiseColor &&
+      other.noiseLevel == noiseLevel &&
+      other.rain == rain &&
+      other.level == level &&
+      other.error == error;
+
+  @override
+  int get hashCode => Object.hash(
+    playback,
+    toneFrequency,
+    toneMode,
+    beatHz,
+    noiseEnabled,
+    noiseColor,
+    noiseLevel,
+    rain,
+    level,
+    error,
+  );
 }

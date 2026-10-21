@@ -10,15 +10,25 @@ Future<void> main() async {
   // Plays as music: not muted by the iPhone ring switch, and ducks other apps politely.
   final session = await AudioSession.instance;
   await session.configure(const AudioSessionConfiguration.music());
-  runApp(const HushExampleApp());
+  final cubit = SoundCubit();
+  // A phone call or Siri stops the output without a device error, and pulling out headphones
+  // should not move the sound to the speaker: fade out in both cases.
+  session.interruptionEventStream.listen((event) {
+    if (event.begin) cubit.stop();
+  });
+  session.becomingNoisyEventStream.listen((_) => cubit.stop());
+  runApp(HushExampleApp(cubit: cubit));
 }
 
 class HushExampleApp extends StatelessWidget {
-  const HushExampleApp({super.key});
+  const HushExampleApp({super.key, required this.cubit});
 
-  static const _ink = Color(0xFFE9E6DF);
-  static const _night = Color(0xFF0E1118);
-  static const _accent = Color(0xFFE0A15E);
+  final SoundCubit cubit;
+
+  // Hush brand colours: Lamp on Night (see the Hush repo's brand/BRAND.md).
+  static const _ink = Color(0xFFE9E5DC);
+  static const _night = Color(0xFF12141C);
+  static const _accent = Color(0xFFF2B66B);
 
   @override
   Widget build(BuildContext context) {
@@ -34,10 +44,7 @@ class HushExampleApp extends StatelessWidget {
         scaffoldBackgroundColor: _night,
         useMaterial3: true,
       ),
-      home: BlocProvider(
-        create: (_) => SoundCubit(),
-        child: const SoundScreen(),
-      ),
+      home: BlocProvider.value(value: cubit, child: const SoundScreen()),
     );
   }
 }

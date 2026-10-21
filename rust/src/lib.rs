@@ -16,6 +16,8 @@
 mod player;
 
 use hush_core::{AmbientKind, NoiseColor, Params, Synth, ToneMode};
+use std::cell::RefCell;
+use std::ffi::{CString, c_char};
 use std::sync::Arc;
 
 pub use player::Player;
@@ -159,10 +161,64 @@ pub unsafe extern "C" fn hush_params_set_ambient(params: *const Params, kind: u8
 /// `params` is null or a live handle from `hush_params_new`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hush_params_master_gain(params: *const Params) -> f32 {
-    let mut gain = 0.0;
     // SAFETY: forwarded to the caller.
-    unsafe { with_params(params, |p| gain = p.master_gain()) };
-    gain
+    unsafe { read(params, 0.0, Params::master_gain) }
+}
+
+/// Reads one value from the params, or `default` for a null handle.
+///
+/// # Safety
+/// `params` is null or a live handle from `hush_params_new`.
+unsafe fn read<T>(params: *const Params, default: T, f: impl FnOnce(&Params) -> T) -> T {
+    // SAFETY: guaranteed by the caller; the borrow does not outlive this call.
+    unsafe { params.as_ref() }.map_or(default, f)
+}
+
+macro_rules! getter {
+    ($(#[$doc:meta])* $name:ident, $ty:ty, $default:expr, |$p:ident| $body:expr) => {
+        $(#[$doc])*
+        ///
+        /// # Safety
+        /// `params` is null or a live handle from `hush_params_new`.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name(params: *const Params) -> $ty {
+            // SAFETY: forwarded to the caller.
+            unsafe { read(params, $default, |$p| $body) }
+        }
+    };
+}
+
+// The values the engine actually holds, after clamping. Dart reads these back instead of keeping
+// its own copies, so a getter can never disagree with what is playing.
+getter!(hush_params_tone_enabled, bool, false, |p| p.tone_enabled());
+getter!(hush_params_tone_frequency, f32, 0.0, |p| p.tone_frequency());
+getter!(hush_params_tone_level, f32, 0.0, |p| p.tone_level());
+getter!(
+    /// 0 steady, 1 binaural, 2 isochronic.
+    hush_params_tone_mode, u8, 0, |p| p.tone_mode() as u8
+);
+getter!(hush_params_beat_hz, f32, 0.0, |p| p.beat_hz());
+getter!(hush_params_noise_enabled, bool, false, |p| p
+    .noise_enabled());
+getter!(
+    /// Noise colour index, as for `hush_params_set_noise_color`.
+    hush_params_noise_color, u8, 0, |p| p.noise_color() as u8
+);
+getter!(hush_params_noise_level, f32, 0.0, |p| p.noise_level());
+getter!(hush_params_swell, bool, false, |p| p.swell_depth() > 0.0);
+getter!(hush_params_spatial, bool, false, |p| p.spatial());
+
+/// Volume of one nature sound by index, or 0 for an unknown index or a null handle.
+///
+/// # Safety
+/// `params` is null or a live handle from `hush_params_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hush_params_ambient_level(params: *const Params, kind: u8) -> f32 {
+    match AmbientKind::ALL.get(usize::from(kind)) {
+        // SAFETY: forwarded to the caller.
+        Some(&k) => unsafe { read(params, 0.0, |p| p.ambient_level(k)) },
+        None => 0.0,
+    }
 }
 
 // ---- offline rendering
@@ -204,7 +260,11 @@ pub unsafe extern "C" fn hush_offline_render(offline: *mut Offline, out: *mut f3
     if offline.is_null() || out.is_null() || frames == 0 {
         return;
     }
-    let Some(len) = frames.checked_mul(2) else {
+    // A slice may not exceed isize::MAX bytes; refuse anything that could.
+    let Some(len) = frames
+        .checked_mul(2)
+        .filter(|n| *n <= isize::MAX as usize / std::mem::size_of::<f32>())
+    else {
         return;
     };
     // SAFETY: guaranteed by the caller as documented above.
@@ -224,9 +284,19 @@ pub unsafe extern "C" fn hush_offline_free(offline: *mut Offline) {
 
 // ---- device playback
 
+thread_local! {
+    /// Why the last `hush_player_new` on this thread failed.
+    static LAST_ERROR: RefCell<CString> = RefCell::new(CString::default());
+}
+
+fn set_last_error(message: &str) {
+    let text = CString::new(message.replace('\0', " ")).unwrap_or_default();
+    LAST_ERROR.with(|e| *e.borrow_mut() = text);
+}
+
 /// Opens the default output device and starts rendering. Sound is heard once `hush_params_play`
-/// raises the master gain. Returns null if no output device could be opened. Free with
-/// `hush_player_free`, from the same thread that created it (Core Audio streams are not `Send`).
+/// raises the master gain. Returns null if no output device could be opened; `hush_last_error`
+/// then says why. Free with `hush_player_free`.
 ///
 /// # Safety
 /// `params` is null or a live handle from `hush_params_new`.
@@ -234,12 +304,23 @@ pub unsafe extern "C" fn hush_offline_free(offline: *mut Offline) {
 pub unsafe extern "C" fn hush_player_new(params: *const Params) -> *mut Player {
     // SAFETY: forwarded to the caller.
     let Some(params) = (unsafe { clone_params(params) }) else {
+        set_last_error("no params");
         return std::ptr::null_mut();
     };
     match Player::open(params) {
         Ok(player) => Box::into_raw(Box::new(player)),
-        Err(_) => std::ptr::null_mut(),
+        Err(message) => {
+            set_last_error(&message);
+            std::ptr::null_mut()
+        }
     }
+}
+
+/// The reason the last `hush_player_new` on this thread returned null, as UTF-8 text. The pointer
+/// stays valid until the next `hush_player_new` on the same thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn hush_last_error() -> *const c_char {
+    LAST_ERROR.with(|e| e.borrow().as_ptr())
 }
 
 /// The output sample rate in Hz, or 0 for a null handle.
@@ -252,16 +333,30 @@ pub unsafe extern "C" fn hush_player_sample_rate(player: *const Player) -> u32 {
     unsafe { player.as_ref() }.map_or(0, Player::sample_rate)
 }
 
-/// Stops the stream and releases the device.
+/// False once the device has reported an error, for example when headphones are unplugged and
+/// the stream stops. False for a null handle.
 ///
 /// # Safety
-/// `player` is null or a handle from `hush_player_new`, freed on the thread that created it and
-/// not used afterwards.
+/// `player` is null or a live handle from `hush_player_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hush_player_is_healthy(player: *const Player) -> bool {
+    // SAFETY: guaranteed by the caller.
+    unsafe { player.as_ref() }.is_some_and(Player::is_healthy)
+}
+
+/// Stops the stream and releases the device. Safe from any thread: on a thread other than the
+/// one that opened it (for example a Dart finalizer), the stream is silenced instead, because a
+/// Core Audio stream must be released where it was created; its memory is then reclaimed when
+/// the process exits.
+///
+/// # Safety
+/// `player` is null or a handle from `hush_player_new` that is not used afterwards.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hush_player_free(player: *mut Player) {
     if !player.is_null() {
         // SAFETY: the caller hands back the box `hush_player_new` gave out.
-        drop(unsafe { Box::from_raw(player) });
+        let player = unsafe { Box::from_raw(player) };
+        player.release();
     }
 }
 
@@ -317,6 +412,37 @@ mod tests {
             hush_offline_render(o, out.as_mut_ptr(), 4_800);
             assert!(out.iter().any(|s| *s != 0.0));
             hush_offline_free(o);
+        }
+    }
+
+    #[test]
+    fn getters_read_back_what_the_engine_holds() {
+        let p = hush_params_new();
+        unsafe {
+            assert_eq!(hush_params_tone_frequency(p), 852.0);
+            hush_params_set_tone_frequency(p, f32::INFINITY);
+            assert_eq!(hush_params_tone_frequency(p), 852.0, "infinity is ignored");
+            hush_params_set_tone_frequency(p, 5_000.0);
+            assert_eq!(hush_params_tone_frequency(p), 2_000.0);
+            hush_params_set_swell(p, true);
+            assert!(hush_params_swell(p));
+            hush_params_set_ambient(p, 4, 0.25);
+            assert_eq!(hush_params_ambient_level(p, 4), 0.25);
+            assert_eq!(hush_params_ambient_level(p, 9), 0.0);
+            assert_eq!(hush_params_tone_mode(std::ptr::null()), 0);
+            hush_params_free(p);
+        }
+    }
+
+    #[test]
+    fn a_failed_open_explains_itself() {
+        unsafe {
+            assert!(hush_player_new(std::ptr::null()).is_null());
+            let why = std::ffi::CStr::from_ptr(hush_last_error())
+                .to_str()
+                .unwrap();
+            assert_eq!(why, "no params");
+            assert!(!hush_player_is_healthy(std::ptr::null()));
         }
     }
 
