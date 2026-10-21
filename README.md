@@ -1,4 +1,4 @@
-<img src="brand/banner.png" alt="hush_audio: calm and sleep sounds for Flutter, powered by Rust" width="100%">
+<img src="brand/banner.svg" alt="hush_audio: calm and sleep sounds for Flutter, powered by Rust" width="100%">
 
 [![CI](https://github.com/abiodunosagie/hush_audio/actions/workflows/ci.yml/badge.svg)](https://github.com/abiodunosagie/hush_audio/actions/workflows/ci.yml)
 
