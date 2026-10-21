@@ -24,6 +24,9 @@ jobs:
         working-directory: rust
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # cpal's Linux backend links ALSA; the host build needs its headers.
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+        working-directory: .
       # Installs the toolchain pinned in rust/rust-toolchain.toml, with its targets.
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
